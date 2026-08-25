@@ -4,9 +4,11 @@ use BookStack\Access\LoginService;
 use BookStack\Facades\Theme;
 use BookStack\Theming\ThemeEvents;
 use BookStack\Users\Models\User;
+use Dotenv\Dotenv;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 /*
  * BookStack `require`s this file rather than `require_once`, and one process can
@@ -23,6 +25,41 @@ if (! defined('DOCS_JUMP_NONCE_TTL')) {
 
 if (! function_exists('docsJumpClients')) {
     /**
+     * Read a value that lives in .env rather than in a config file.
+     *
+     * When the deployment caches config, Laravel skips loading .env entirely
+     * (LoadEnvironmentVariables::bootstrap returns early), so env() comes back
+     * empty at runtime even though the value is set. Parse the file directly in
+     * that case, and hold the result for the rest of the request.
+     */
+    function docsJumpEnvValue(string $key): string
+    {
+        static $parsed = null;
+
+        $value = strval(env($key, ''));
+
+        if ($value !== '') {
+            return $value;
+        }
+
+        if (is_null($parsed)) {
+            $parsed = [];
+
+            try {
+                $path = base_path('.env');
+
+                if (is_readable($path)) {
+                    $parsed = Dotenv::parse(strval(file_get_contents($path)));
+                }
+            } catch (\Throwable $exception) {
+                Log::warning("Could not read .env for documentation jump config: {$exception->getMessage()}");
+            }
+        }
+
+        return strval($parsed[$key] ?? '');
+    }
+
+    /**
      * Registered linking applications, keyed by client id.
      *
      * Read from the DOCS_JUMP_CLIENTS environment variable, which holds a JSON
@@ -32,7 +69,7 @@ if (! function_exists('docsJumpClients')) {
      */
     function docsJumpClients(): array
     {
-        $raw = strval(env('DOCS_JUMP_CLIENTS', ''));
+        $raw = docsJumpEnvValue('DOCS_JUMP_CLIENTS');
 
         if ($raw === '') {
             return [];
@@ -134,7 +171,9 @@ Theme::listen(ThemeEvents::ROUTES_REGISTER_WEB, function (Router $router): void 
         $serviceUser = User::query()->where('email', '=', $client['user'])->first();
 
         if (is_null($serviceUser)) {
-            abort(503);
+            Log::error("Documentation jump client \"{$clientId}\" names a BookStack user that does not exist: {$client['user']}");
+
+            abort(500);
         }
 
         $loginService->login($serviceUser, "docs-jump:{$clientId}");
