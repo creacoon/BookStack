@@ -8,68 +8,81 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Cache;
 
-const DOCS_JUMP_NONCE_TTL = 300;
-
-/**
- * Registered linking applications, keyed by client id.
+/*
+ * BookStack `require`s this file rather than `require_once`, and one process can
+ * boot the application more than once (`artisan config:cache` does), so every
+ * declaration below has to tolerate being reached twice.
  *
- * Read from the DOCS_JUMP_CLIENTS environment variable, which holds a JSON
- * object of {"client-id": {"secret": "...", "user": "..."}} entries.
- *
- * @return array<string, array{secret: string, user: string}>
+ * The listener registration at the bottom is deliberately left unguarded: each
+ * application instance gets its own ThemeService and needs the route.
  */
-function docsJumpClients(): array
-{
-    $raw = strval(env('DOCS_JUMP_CLIENTS', ''));
 
-    if ($raw === '') {
-        return [];
-    }
-
-    $clients = json_decode($raw, true);
-
-    if (! is_array($clients)) {
-        return [];
-    }
-
-    return array_filter($clients, function (mixed $client): bool {
-        return is_array($client) && ! empty($client['secret']) && ! empty($client['user']);
-    });
+if (! defined('DOCS_JUMP_NONCE_TTL')) {
+    define('DOCS_JUMP_NONCE_TTL', 300);
 }
 
-/**
- * @return ?array{secret: string, user: string}
- */
-function docsJumpClient(string $clientId): ?array
-{
-    return docsJumpClients()[$clientId] ?? null;
-}
+if (! function_exists('docsJumpClients')) {
+    /**
+     * Registered linking applications, keyed by client id.
+     *
+     * Read from the DOCS_JUMP_CLIENTS environment variable, which holds a JSON
+     * object of {"client-id": {"secret": "...", "user": "..."}} entries.
+     *
+     * @return array<string, array{secret: string, user: string}>
+     */
+    function docsJumpClients(): array
+    {
+        $raw = strval(env('DOCS_JUMP_CLIENTS', ''));
 
-function docsJumpDecodePayload(string $payload): ?array
-{
-    $decoded = base64_decode(strtr($payload, '-_', '+/'), true);
+        if ($raw === '') {
+            return [];
+        }
 
-    if ($decoded === false) {
-        return null;
+        $clients = json_decode($raw, true);
+
+        if (! is_array($clients)) {
+            return [];
+        }
+
+        return array_filter($clients, function (mixed $client): bool {
+            return is_array($client) && ! empty($client['secret']) && ! empty($client['user']);
+        });
     }
 
-    $data = json_decode($decoded, true);
-
-    return is_array($data) ? $data : null;
-}
-
-function docsJumpSignatureValid(string $payload, string $signature, string $secret): bool
-{
-    return hash_equals(hash_hmac('sha256', $payload, $secret), $signature);
-}
-
-function docsJumpSafeTarget(mixed $target): string
-{
-    if (! is_string($target) || ! str_starts_with($target, '/') || str_starts_with($target, '//')) {
-        return '/';
+    /**
+     * @return ?array{secret: string, user: string}
+     */
+    function docsJumpClient(string $clientId): ?array
+    {
+        return docsJumpClients()[$clientId] ?? null;
     }
 
-    return $target;
+    function docsJumpDecodePayload(string $payload): ?array
+    {
+        $decoded = base64_decode(strtr($payload, '-_', '+/'), true);
+
+        if ($decoded === false) {
+            return null;
+        }
+
+        $data = json_decode($decoded, true);
+
+        return is_array($data) ? $data : null;
+    }
+
+    function docsJumpSignatureValid(string $payload, string $signature, string $secret): bool
+    {
+        return hash_equals(hash_hmac('sha256', $payload, $secret), $signature);
+    }
+
+    function docsJumpSafeTarget(mixed $target): string
+    {
+        if (! is_string($target) || ! str_starts_with($target, '/') || str_starts_with($target, '//')) {
+            return '/';
+        }
+
+        return $target;
+    }
 }
 
 Theme::listen(ThemeEvents::ROUTES_REGISTER_WEB, function (Router $router): void {
