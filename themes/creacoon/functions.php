@@ -112,6 +112,21 @@ if (! function_exists('docsJumpClients')) {
         return hash_equals(hash_hmac('sha256', $payload, $secret), $signature);
     }
 
+    /**
+     * Refuse a jump, recording why.
+     *
+     * The visitor always sees a bare 403: the reason would tell an attacker
+     * which half of the token to change next. The log is where the reason goes,
+     * because expired, replayed and wrongly-signed links are otherwise
+     * indistinguishable when someone reports "it does not work".
+     */
+    function docsJumpReject(string $clientId, string $reason): never
+    {
+        Log::warning("Documentation jump rejected for client \"{$clientId}\": {$reason}");
+
+        abort(403);
+    }
+
     function docsJumpSafeTarget(mixed $target): string
     {
         if (! is_string($target) || ! str_starts_with($target, '/') || str_starts_with($target, '//')) {
@@ -132,34 +147,39 @@ Theme::listen(ThemeEvents::ROUTES_REGISTER_WEB, function (Router $router): void 
         $client = docsJumpClient($clientId);
 
         if (is_null($client)) {
-            abort(403);
+            docsJumpReject($clientId, 'no such client is registered in DOCS_JUMP_CLIENTS');
         }
 
         $payload = strval($request->query('d', ''));
         $signature = strval($request->query('s', ''));
 
         if (! docsJumpSignatureValid($payload, $signature, $client['secret'])) {
-            abort(403);
+            docsJumpReject($clientId, 'signature does not match; the two sides hold different secrets');
         }
 
         $data = docsJumpDecodePayload($payload);
 
         if (is_null($data)) {
-            abort(403);
+            docsJumpReject($clientId, 'payload is not valid base64url-encoded JSON');
         }
 
         if (strval($data['aud'] ?? '') !== $clientId) {
-            abort(403);
+            docsJumpReject($clientId, 'payload aud claim does not match the client in the query string');
         }
 
         if (intval($data['exp'] ?? 0) < time()) {
-            abort(403);
+            $age = time() - intval($data['exp'] ?? 0);
+            docsJumpReject($clientId, "link expired {$age}s ago; it must be followed within its lifetime of a minute");
         }
 
         $nonce = strval($data['nonce'] ?? '');
 
-        if ($nonce === '' || ! Cache::add("docs-jump:{$clientId}:{$nonce}", true, DOCS_JUMP_NONCE_TTL)) {
-            abort(403);
+        if ($nonce === '') {
+            docsJumpReject($clientId, 'payload carries no nonce');
+        }
+
+        if (! Cache::add("docs-jump:{$clientId}:{$nonce}", true, DOCS_JUMP_NONCE_TTL)) {
+            docsJumpReject($clientId, 'link already used; each link works once, reload the linking page for a fresh one');
         }
 
         $target = docsJumpSafeTarget($data['to'] ?? '/');
