@@ -25,8 +25,8 @@ core file is modified, so upgrades stay clean.
 
 ```json
 {
-  "hofweb":   {"secret": "...", "user": "docs-hofweb@example.com"},
-  "edgelink": {"secret": "...", "user": "docs-edgelink@example.com"}
+  "first-app":  {"secret": "...", "user": "docs-first-app@example.com"},
+  "second-app": {"secret": "...", "user": "docs-second-app@example.com"}
 }
 ```
 
@@ -42,10 +42,10 @@ Payload, before base64url encoding:
 
 ```json
 {
-  "aud": "hofweb",
+  "aud": "first-app",
   "exp": 1717070000,
   "nonce": "16-random-chars",
-  "to": "/books/hofweb/page/getting-started"
+  "to": "/books/first-app/page/getting-started"
 }
 ```
 
@@ -57,13 +57,13 @@ Generating side, in a linking Laravel application:
 
 ```php
 $payload = rtrim(strtr(base64_encode(json_encode([
-    'aud'   => 'hofweb',
+    'aud'   => 'first-app',
     'exp'   => time() + 60,
     'nonce' => Str::random(16),
-    'to'    => '/books/hofweb/page/getting-started',
+    'to'    => '/books/first-app/page/getting-started',
 ])), '+/', '-_'), '=');
 
-$url = 'https://docs.example.com/sso/jump?c=hofweb&d=' . $payload
+$url = 'https://docs.example.com/sso/jump?c=first-app&d=' . $payload
     . '&s=' . hash_hmac('sha256', $payload, $secret);
 ```
 
