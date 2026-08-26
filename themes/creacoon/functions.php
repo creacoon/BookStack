@@ -139,6 +139,25 @@ if (! function_exists('docsJumpClients')) {
 
 Theme::listen(ThemeEvents::ROUTES_REGISTER_WEB, function (Router $router): void {
     $router->get('/sso/jump', function (Request $request, LoginService $loginService) {
+        $payload = strval($request->query('d', ''));
+
+        /*
+         * Someone already signed in has their own session and their own
+         * permissions, so the token has nothing left to grant them. Show them
+         * the page instead of refusing a link that happens to be expired or
+         * already used, which is what a staff member following a colleague's
+         * link would otherwise hit.
+         *
+         * The target is not trusted here: docsJumpSafeTarget keeps it to a
+         * relative path, making this an ordinary same-site redirect that grants
+         * nothing the visitor could not already reach. No nonce is spent.
+         */
+        if (auth()->check()) {
+            $data = docsJumpDecodePayload($payload);
+
+            return redirect(is_null($data) ? '/' : docsJumpSafeTarget($data['to'] ?? '/'));
+        }
+
         if (docsJumpClients() === []) {
             abort(503);
         }
@@ -150,7 +169,6 @@ Theme::listen(ThemeEvents::ROUTES_REGISTER_WEB, function (Router $router): void 
             docsJumpReject($clientId, 'no such client is registered in DOCS_JUMP_CLIENTS');
         }
 
-        $payload = strval($request->query('d', ''));
         $signature = strval($request->query('s', ''));
 
         if (! docsJumpSignatureValid($payload, $signature, $client['secret'])) {
@@ -183,10 +201,6 @@ Theme::listen(ThemeEvents::ROUTES_REGISTER_WEB, function (Router $router): void 
         }
 
         $target = docsJumpSafeTarget($data['to'] ?? '/');
-
-        if (auth()->check()) {
-            return redirect($target);
-        }
 
         $serviceUser = User::query()->where('email', '=', $client['user'])->first();
 
